@@ -67,3 +67,55 @@ Extract the following metadata and return it as a single valid JSON object with 
 
 Return ONLY valid JSON. No prose, no markdown fences, no explanation.
 """
+
+
+# ---------------------------------------------------------------------------
+# RELATIONSHIP_PROMPT
+# Format keys: {fact_a_json}, {fact_b_json}
+# ---------------------------------------------------------------------------
+
+RELATIONSHIP_PROMPT = """\
+You are a financial and economic fact relationship analyst.
+
+You will be given two structured facts extracted from different source documents. \
+Your task is to determine the relationship between them.
+
+Fact A:
+{fact_a_json}
+
+Fact B:
+{fact_b_json}
+
+Determine the relationship between Fact A and Fact B. Choose exactly one of:
+
+- "corroborates": Both facts make the same or fully consistent claim about the same subject. \
+  They may use slightly different wording but agree on the underlying data point.
+
+- "contradicts": The facts make genuinely conflicting claims about the same subject, \
+  and the conflict CANNOT be explained by differences in time period, unit, scope, or \
+  reporting standard. This is a true data conflict.
+
+- "reconcilable": The facts appear to conflict numerically or semantically, but the \
+  conflict CAN be explained by a clear difference in time period (e.g. FY23 vs FY24), \
+  unit (e.g. crore vs million), scope (e.g. consolidated vs standalone), or reporting \
+  standard. The explanation must cite the specific reconciling factor.
+
+- "unrelated": The two facts are about completely different subjects or topics with no \
+  meaningful connection worth surfacing to an analyst.
+
+Rules:
+- NEVER return "unrelated" if both facts share the same subject AND predicate — you must \
+  reason through them and return corroborates, contradicts, or reconcilable.
+- Your explanation must be 1-3 sentences in plain English. It must cite the specific \
+  agreement or difference (e.g., mention the exact values, the unit difference, the \
+  time period mismatch, or the scope qualifier).
+- Base your reasoning only on the information present in the two fact objects above. \
+  Do not hallucinate or assume context not provided.
+
+Return ONLY a valid JSON object with exactly these keys:
+- "relationship_type": one of "corroborates", "contradicts", "reconcilable", "unrelated"
+- "confidence": float between 0.0 and 1.0 — your confidence in this classification
+- "explanation": string, 1-3 sentences
+
+No prose, no markdown fences, no extra keys.
+"""

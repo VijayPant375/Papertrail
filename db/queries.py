@@ -266,3 +266,148 @@ def update_document_metadata(document_id: str, metadata: dict) -> None:
         (json.dumps(metadata), document_id),
     )
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# relationships table
+# ---------------------------------------------------------------------------
+
+def save_relationship(
+    fact_id_a: str,
+    fact_id_b: str,
+    relationship_type: str,
+    explanation: str,
+    confidence: float,
+) -> str:
+    """
+    Insert a new row into the *relationships* table.
+
+    Args:
+        fact_id_a:         UUID of the first fact.
+        fact_id_b:         UUID of the second fact.
+        relationship_type: One of "corroborates", "contradicts", "reconcilable".
+        explanation:       Plain-English explanation of the relationship.
+        confidence:        Model confidence score (0.0 – 1.0).
+
+    Returns:
+        The newly generated relationship id (UUID string).
+    """
+    rel_id = str(uuid.uuid4())
+    created_at = datetime.now(timezone.utc).isoformat()
+
+    conn = get_db()
+    conn.execute(
+        """
+        INSERT INTO relationships
+            (id, fact_id_a, fact_id_b, relationship_type, explanation, confidence, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (rel_id, fact_id_a, fact_id_b, relationship_type, explanation, confidence, created_at),
+    )
+    conn.close()
+
+    return rel_id
+
+
+def get_relationships_for_document(document_id: str) -> list[dict]:
+    """
+    Return all relationships where at least one fact belongs to *document_id*.
+
+    Each row is enriched via JOINs with:
+        - fact_a / fact_b subjects, predicates, values, evidence_quotes
+        - source_filename_a / source_filename_b from the documents table
+
+    Returns:
+        List of dicts with relationship + fact + document provenance fields.
+    """
+    conn = get_db()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.execute(
+        """
+        SELECT
+            r.id                    AS relationship_id,
+            r.relationship_type,
+            r.explanation,
+            r.confidence,
+            r.created_at,
+
+            fa.id                   AS fact_id_a,
+            fa.subject              AS subject_a,
+            fa.predicate            AS predicate_a,
+            fa.value                AS value_a,
+            fa.evidence_quote       AS evidence_quote_a,
+            fa.evidence_page        AS evidence_page_a,
+            da.filename             AS source_filename_a,
+
+            fb.id                   AS fact_id_b,
+            fb.subject              AS subject_b,
+            fb.predicate            AS predicate_b,
+            fb.value                AS value_b,
+            fb.evidence_quote       AS evidence_quote_b,
+            fb.evidence_page        AS evidence_page_b,
+            db.filename             AS source_filename_b
+
+        FROM relationships r
+        JOIN facts fa ON fa.id = r.fact_id_a
+        JOIN facts fb ON fb.id = r.fact_id_b
+        JOIN documents da ON da.id = fa.document_id
+        JOIN documents db ON db.id = fb.document_id
+        WHERE fa.document_id = ? OR fb.document_id = ?
+        ORDER BY r.created_at DESC
+        """,
+        (document_id, document_id),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+
+    return [dict(row) for row in rows]
+
+
+def get_all_relationships() -> list[dict]:
+    """
+    Return every relationship in the database, enriched with fact subjects,
+    values, evidence quotes, and source document filenames.
+
+    Returns:
+        List of dicts ordered by created_at descending.
+    """
+    conn = get_db()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.execute(
+        """
+        SELECT
+            r.id                    AS relationship_id,
+            r.relationship_type,
+            r.explanation,
+            r.confidence,
+            r.created_at,
+
+            fa.id                   AS fact_id_a,
+            fa.subject              AS subject_a,
+            fa.predicate            AS predicate_a,
+            fa.value                AS value_a,
+            fa.evidence_quote       AS evidence_quote_a,
+            fa.evidence_page        AS evidence_page_a,
+            da.filename             AS source_filename_a,
+
+            fb.id                   AS fact_id_b,
+            fb.subject              AS subject_b,
+            fb.predicate            AS predicate_b,
+            fb.value                AS value_b,
+            fb.evidence_quote       AS evidence_quote_b,
+            fb.evidence_page        AS evidence_page_b,
+            db.filename             AS source_filename_b
+
+        FROM relationships r
+        JOIN facts fa ON fa.id = r.fact_id_a
+        JOIN facts fb ON fb.id = r.fact_id_b
+        JOIN documents da ON da.id = fa.document_id
+        JOIN documents db ON db.id = fb.document_id
+        ORDER BY r.created_at DESC
+        """
+    )
+    rows = cursor.fetchall()
+    conn.close()
+
+    return [dict(row) for row in rows]
+
