@@ -41,13 +41,14 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _GENERATION_MODELS = [
-    "gemini-2.5-flash",
     "gemini-3.8-flash",
     "gemini-3.5-flash",
+    "gemini-3.6-flash",
     "gemini-3.1-flash-lite",
 ]
 _EMBEDDING_MODELS = [
-    "gemini-embedding-002",
+    "gemini-embedding-001",
+    "text-embedding-004",
 ]
 
 

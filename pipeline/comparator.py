@@ -39,9 +39,9 @@ _MAX_CANDIDATE_PAIRS = 100
 
 # Gemini models used for relationship classification (with automatic fallback)
 _COMPARISON_MODELS = [
-    "gemini-2.5-flash",
     "gemini-3.8-flash",
     "gemini-3.5-flash",
+    "gemini-3.6-flash",
     "gemini-3.1-flash-lite",
 ]
 
