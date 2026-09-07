@@ -20,8 +20,11 @@ def init_db(db_path: str) -> sqlite3.Connection:
     """
     conn = sqlite3.connect(db_path, check_same_thread=False, isolation_level=None)
 
-    # Load the sqlite-vec vector extension
+    # Extension loading is disabled by default in Python's sqlite3 — enable it
+    # briefly, load sqlite-vec, then lock it back down.
+    conn.enable_load_extension(True)
     sqlite_vec.load(conn)
+    conn.enable_load_extension(False)
 
     conn.executescript("""
         -- ----------------------------------------------------------------
@@ -92,5 +95,7 @@ def get_db() -> sqlite3.Connection:
     """
     db_path = os.getenv("DB_PATH", "facts.db")
     conn = sqlite3.connect(db_path, check_same_thread=False, isolation_level=None)
+    conn.enable_load_extension(True)
     sqlite_vec.load(conn)
+    conn.enable_load_extension(False)
     return conn
