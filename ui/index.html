@@ -1,1 +1,932 @@
-<!-- ui placeholder -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fact Knowledge Layer — Papertrail</title>
+  <meta name="description" content="Inspect extracted facts and cross-document relationships from uploaded financial and economic PDFs." />
+  <style>
+    /* =========================================================
+       DESIGN TOKENS
+       ========================================================= */
+    :root {
+      --bg:           #0f1117;
+      --bg-surface:   #181b24;
+      --bg-elevated:  #1f2330;
+      --bg-hover:     #252a38;
+      --border:       #2a2f42;
+      --border-light: #333a52;
+
+      --text:         #e2e6f0;
+      --text-muted:   #7a84a0;
+      --text-dim:     #4a5068;
+
+      --accent:       #5b8dee;
+      --accent-dim:   #1e2e52;
+
+      --green:        #3ecf8e;
+      --green-dim:    #0f3024;
+      --yellow:       #f5a623;
+      --yellow-dim:   #3a2800;
+      --red:          #e05252;
+      --red-dim:      #380f0f;
+      --orange:       #f5813a;
+      --orange-dim:   #3a1f00;
+
+      --radius:       8px;
+      --radius-sm:    4px;
+      --font:         -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-mono:    "SF Mono", "Fira Code", Consolas, monospace;
+      --shadow:       0 2px 12px rgba(0,0,0,0.4);
+    }
+
+    /* =========================================================
+       RESET & BASE
+       ========================================================= */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    button {
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 13px;
+      border: none;
+      border-radius: var(--radius-sm);
+      transition: opacity 0.15s, background 0.15s;
+    }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    button:not(:disabled):hover { opacity: 0.88; }
+
+    /* =========================================================
+       LAYOUT
+       ========================================================= */
+    #app {
+      display: grid;
+      grid-template-rows: 52px 1fr;
+      grid-template-columns: 280px 1fr;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* Header spans full width */
+    #header {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 20px;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
+      z-index: 10;
+    }
+    #header h1 {
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: -0.3px;
+      color: var(--text);
+    }
+    #header .tagline {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    #header .spacer { flex: 1; }
+    #btn-all-rel {
+      padding: 6px 14px;
+      background: var(--accent-dim);
+      color: var(--accent);
+      border: 1px solid var(--accent);
+      font-weight: 500;
+    }
+
+    /* Sidebar */
+    #sidebar {
+      background: var(--bg-surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Main */
+    #main {
+      overflow-y: auto;
+      padding: 20px;
+    }
+
+    /* =========================================================
+       UPLOAD PANEL
+       ========================================================= */
+    #upload-panel {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    #upload-panel label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      display: block;
+      margin-bottom: 8px;
+    }
+    #upload-panel input[type="file"] {
+      width: 100%;
+      font-size: 12px;
+      color: var(--text-muted);
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 6px 8px;
+      margin-bottom: 8px;
+    }
+    #upload-panel input[type="file"]::-webkit-file-upload-button {
+      background: var(--bg-hover);
+      color: var(--text);
+      border: none;
+      padding: 4px 10px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      font-size: 12px;
+      margin-right: 8px;
+    }
+    #btn-upload {
+      width: 100%;
+      padding: 8px;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 600;
+    }
+    #upload-status {
+      margin-top: 8px;
+      font-size: 12px;
+      min-height: 18px;
+    }
+    #upload-status.loading { color: var(--text-muted); }
+    #upload-status.error   { color: var(--red); }
+    #upload-status.ok      { color: var(--green); }
+
+    /* =========================================================
+       DOCUMENT LIST
+       ========================================================= */
+    #doc-list-header {
+      padding: 10px 16px 6px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+    }
+    #doc-list {
+      flex: 1;
+      overflow-y: auto;
+    }
+    .doc-item {
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+    .doc-item:hover { background: var(--bg-hover); }
+    .doc-item.active { background: var(--accent-dim); border-left: 3px solid var(--accent); }
+    .doc-item .doc-name {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text);
+      word-break: break-all;
+      margin-bottom: 2px;
+    }
+    .doc-item .doc-time {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    #doc-list-empty {
+      padding: 20px 16px;
+      font-size: 12px;
+      color: var(--text-dim);
+      text-align: center;
+    }
+
+    /* =========================================================
+       MAIN AREA — EMPTY / PLACEHOLDER
+       ========================================================= */
+    #main-placeholder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      gap: 10px;
+      color: var(--text-dim);
+    }
+    #main-placeholder svg { opacity: 0.3; }
+    #main-placeholder p { font-size: 13px; }
+
+    /* =========================================================
+       DOCUMENT DETAIL
+       ========================================================= */
+    #doc-detail { display: none; }
+
+    #doc-detail h2 {
+      font-size: 17px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 14px;
+      word-break: break-word;
+    }
+
+    /* Metadata card */
+    .meta-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .meta-item { display: flex; flex-direction: column; gap: 2px; }
+    .meta-item .meta-label {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+    }
+    .meta-item .meta-value {
+      font-size: 13px;
+      color: var(--text);
+      font-weight: 500;
+    }
+
+    /* Section headings */
+    .section-heading {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .section-heading .count {
+      font-weight: 400;
+      color: var(--text-dim);
+      font-size: 11px;
+    }
+
+    /* =========================================================
+       FACTS TABLE
+       ========================================================= */
+    #facts-section { margin-bottom: 32px; }
+
+    .table-wrap {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      overflow-x: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12.5px;
+    }
+    thead th {
+      background: var(--bg-elevated);
+      padding: 9px 12px;
+      text-align: left;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      white-space: nowrap;
+      border-bottom: 1px solid var(--border);
+    }
+    tbody tr {
+      border-bottom: 1px solid var(--border);
+      transition: background 0.1s;
+    }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: var(--bg-hover); }
+    td {
+      padding: 8px 12px;
+      vertical-align: top;
+      color: var(--text);
+      max-width: 240px;
+    }
+    td.wrap { white-space: normal; word-break: break-word; }
+
+    /* Confidence coloring */
+    tr.conf-high  { border-left: 3px solid var(--green); }
+    tr.conf-med   { border-left: 3px solid var(--yellow); }
+    tr.conf-low   { border-left: 3px solid var(--red); }
+
+    .conf-badge {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 99px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .conf-badge.high { background: var(--green-dim);  color: var(--green); }
+    .conf-badge.med  { background: var(--yellow-dim); color: var(--yellow); }
+    .conf-badge.low  { background: var(--red-dim);    color: var(--red); }
+
+    .type-pill {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 99px;
+      font-size: 10px;
+      font-weight: 600;
+      font-family: var(--font-mono);
+      background: var(--bg-elevated);
+      color: var(--accent);
+      border: 1px solid var(--border-light);
+    }
+
+    /* =========================================================
+       RELATIONSHIPS
+       ========================================================= */
+    #rel-section { margin-bottom: 32px; }
+
+    .rel-filters {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    .filter-btn {
+      padding: 4px 12px;
+      background: var(--bg-elevated);
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      font-size: 12px;
+    }
+    .filter-btn.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+
+    .rel-cards { display: flex; flex-direction: column; gap: 10px; }
+    .rel-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+    }
+    .rel-card-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .rel-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 10px;
+      border-radius: 99px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .rel-badge.corroborates { background: var(--green-dim);  color: var(--green); }
+    .rel-badge.contradicts  { background: var(--red-dim);    color: var(--red); }
+    .rel-badge.reconcilable { background: var(--orange-dim); color: var(--orange); }
+
+    .rel-conf {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-left: auto;
+    }
+
+    .rel-facts {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 10px;
+      align-items: start;
+      margin-bottom: 10px;
+    }
+    .rel-fact-box {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+    }
+    .rel-fact-box .fact-subject {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 3px;
+    }
+    .rel-fact-box .fact-value {
+      font-size: 12px;
+      color: var(--text-muted);
+      word-break: break-word;
+    }
+    .rel-fact-box .fact-source {
+      font-size: 10px;
+      color: var(--text-dim);
+      margin-top: 5px;
+      word-break: break-all;
+    }
+    .rel-vs {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-dim);
+      padding-top: 12px;
+    }
+    .rel-explanation {
+      font-size: 12.5px;
+      color: var(--text-muted);
+      line-height: 1.6;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+    }
+
+    #rel-empty {
+      padding: 20px;
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-dim);
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+
+    /* =========================================================
+       GLOBAL RELATIONSHIPS VIEW
+       ========================================================= */
+    #all-rel-view { display: none; }
+    #all-rel-view h2 {
+      font-size: 17px;
+      font-weight: 600;
+      margin-bottom: 14px;
+    }
+    #btn-back {
+      padding: 6px 14px;
+      background: var(--bg-elevated);
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      margin-bottom: 16px;
+    }
+
+    /* =========================================================
+       SPINNER
+       ========================================================= */
+    .spinner {
+      display: inline-block;
+      width: 12px; height: 12px;
+      border: 2px solid var(--border-light);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-right: 5px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* scrollbar */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 99px; }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ===== HEADER ===== -->
+  <header id="header">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#5b8dee" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+      <polyline points="14 2 14 8 20 8"/>
+      <line x1="16" y1="13" x2="8" y2="13"/>
+      <line x1="16" y1="17" x2="8" y2="17"/>
+      <polyline points="10 9 9 9 8 9"/>
+    </svg>
+    <h1>Fact Knowledge Layer</h1>
+    <span class="tagline">— structured fact extraction &amp; cross-document comparison</span>
+    <div class="spacer"></div>
+    <button id="btn-all-rel" onclick="showAllRelationships()">View all relationships</button>
+  </header>
+
+  <!-- ===== SIDEBAR ===== -->
+  <aside id="sidebar">
+    <div id="upload-panel">
+      <label for="pdf-input">Upload PDF</label>
+      <input type="file" id="pdf-input" accept=".pdf" />
+      <button id="btn-upload" onclick="uploadFile()">Upload &amp; Extract</button>
+      <div id="upload-status"></div>
+    </div>
+
+    <div id="doc-list-header">Documents</div>
+    <div id="doc-list">
+      <div id="doc-list-empty">No documents yet.</div>
+    </div>
+  </aside>
+
+  <!-- ===== MAIN ===== -->
+  <main id="main">
+
+    <!-- Placeholder -->
+    <div id="main-placeholder">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+      </svg>
+      <p>Select a document to inspect its facts and relationships.</p>
+    </div>
+
+    <!-- Document detail -->
+    <div id="doc-detail">
+      <h2 id="doc-title"></h2>
+      <div class="meta-card" id="meta-card"></div>
+
+      <!-- Facts -->
+      <div id="facts-section">
+        <div class="section-heading">
+          Facts <span class="count" id="facts-count"></span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>Subject</th>
+                <th>Predicate</th>
+                <th>Value</th>
+                <th>Period / Scope</th>
+                <th>Confidence</th>
+                <th>Page</th>
+              </tr>
+            </thead>
+            <tbody id="facts-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Relationships -->
+      <div id="rel-section">
+        <div class="section-heading">
+          Relationships <span class="count" id="rel-count"></span>
+        </div>
+        <div class="rel-filters" id="doc-rel-filters"></div>
+        <div class="rel-cards" id="rel-cards"></div>
+        <div id="rel-empty" style="display:none">No relationships found for this document yet.</div>
+      </div>
+    </div>
+
+    <!-- All relationships view -->
+    <div id="all-rel-view">
+      <button id="btn-back" onclick="goBackToDoc()">← Back</button>
+      <h2>All Cross-Document Relationships</h2>
+      <div class="rel-filters" id="all-rel-filters"></div>
+      <div class="rel-cards" id="all-rel-cards"></div>
+      <div id="all-rel-empty" style="display:none">No relationships found.</div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+  /* ============================================================
+     STATE
+     ============================================================ */
+  let selectedDocId = null;
+  let allDocRelationships = [];
+  let allGlobalRelationships = [];
+  let activeDocFilter = 'all';
+  let activeGlobalFilter = 'all';
+
+  /* ============================================================
+     INIT
+     ============================================================ */
+  document.addEventListener('DOMContentLoaded', () => {
+    loadDocuments();
+  });
+
+  /* ============================================================
+     DOCUMENTS
+     ============================================================ */
+  async function loadDocuments() {
+    try {
+      const docs = await apiFetch('/documents');
+      renderDocList(docs);
+    } catch (e) {
+      console.error('Failed to load documents:', e);
+    }
+  }
+
+  function renderDocList(docs) {
+    const list = document.getElementById('doc-list');
+    const empty = document.getElementById('doc-list-empty');
+
+    if (!docs || docs.length === 0) {
+      empty.style.display = 'block';
+      list.innerHTML = '';
+      list.appendChild(empty);
+      return;
+    }
+
+    empty.style.display = 'none';
+    list.innerHTML = '';
+
+    docs.forEach(doc => {
+      const item = document.createElement('div');
+      item.className = 'doc-item' + (doc.id === selectedDocId ? ' active' : '');
+      item.dataset.id = doc.id;
+
+      const uploadDate = doc.upload_time
+        ? new Date(doc.upload_time).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+        : '—';
+
+      item.innerHTML = `
+        <div class="doc-name">${escHtml(doc.filename)}</div>
+        <div class="doc-time">${uploadDate} · ${doc.page_count} pages</div>
+      `;
+      item.onclick = () => selectDocument(doc.id);
+      list.appendChild(item);
+    });
+  }
+
+  async function selectDocument(docId) {
+    selectedDocId = docId;
+    activeDocFilter = 'all';
+
+    // Highlight sidebar item
+    document.querySelectorAll('.doc-item').forEach(el => {
+      el.classList.toggle('active', el.dataset.id === docId);
+    });
+
+    // Show detail view
+    showView('doc-detail');
+
+    try {
+      const doc = await apiFetch(`/documents/${docId}`);
+      renderDocDetail(doc);
+    } catch (e) {
+      console.error('Failed to load document detail:', e);
+    }
+
+    try {
+      const rels = await apiFetch(`/documents/${docId}/relationships`);
+      allDocRelationships = rels;
+      renderRelationships(rels, 'doc-rel-filters', 'rel-cards', 'rel-empty', 'activeDocFilter');
+    } catch (e) {
+      console.error('Failed to load relationships:', e);
+    }
+  }
+
+  function renderDocDetail(doc) {
+    const meta = doc.metadata || {};
+
+    document.getElementById('doc-title').textContent = meta.title || doc.filename;
+
+    const metaCard = document.getElementById('meta-card');
+    metaCard.innerHTML = `
+      ${metaField('Organization', meta.organization)}
+      ${metaField('Document Type', formatDocType(meta.document_type))}
+      ${metaField('Period Covered', meta.period_covered)}
+      ${metaField('Publication Date', meta.publication_date)}
+      ${metaField('Pages', doc.page_count)}
+    `;
+
+    const facts = doc.facts || [];
+    document.getElementById('facts-count').textContent = `(${facts.length})`;
+    renderFactsTable(facts);
+  }
+
+  function metaField(label, value) {
+    if (!value) return '';
+    return `<div class="meta-item">
+      <span class="meta-label">${escHtml(label)}</span>
+      <span class="meta-value">${escHtml(String(value))}</span>
+    </div>`;
+  }
+
+  function formatDocType(type) {
+    if (!type) return null;
+    return type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  }
+
+  /* ============================================================
+     FACTS TABLE
+     ============================================================ */
+  function renderFactsTable(facts) {
+    const tbody = document.getElementById('facts-tbody');
+    tbody.innerHTML = '';
+
+    if (!facts.length) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-dim);padding:20px">No facts extracted.</td></tr>';
+      return;
+    }
+
+    facts.forEach(f => {
+      const conf = typeof f.confidence === 'number' ? f.confidence : null;
+      const confClass = conf === null ? '' : conf >= 0.8 ? 'conf-high' : conf >= 0.5 ? 'conf-med' : 'conf-low';
+      const badgeClass = conf === null ? '' : conf >= 0.8 ? 'high' : conf >= 0.5 ? 'med' : 'low';
+      const confText = conf !== null ? conf.toFixed(2) : '—';
+
+      const ctx = f.context || {};
+      const periodScope = [ctx.period, ctx.scope].filter(Boolean).join(' / ') || '—';
+
+      const tr = document.createElement('tr');
+      tr.className = confClass;
+      tr.innerHTML = `
+        <td><span class="type-pill">${escHtml(f.fact_type || '—')}</span></td>
+        <td class="wrap">${escHtml(f.subject || '—')}</td>
+        <td class="wrap">${escHtml(f.predicate || '—')}</td>
+        <td class="wrap"><strong>${escHtml(f.value || '—')}</strong></td>
+        <td>${escHtml(periodScope)}</td>
+        <td><span class="conf-badge ${badgeClass}">${confText}</span></td>
+        <td>${f.evidence_page || '—'}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+
+  /* ============================================================
+     RELATIONSHIPS
+     ============================================================ */
+  function renderRelationships(rels, filterId, cardsId, emptyId, filterStateKey) {
+    const types = ['all', ...new Set(rels.map(r => r.relationship_type))];
+
+    // Render filter buttons
+    const filtersEl = document.getElementById(filterId);
+    filtersEl.innerHTML = '';
+    types.forEach(t => {
+      const btn = document.createElement('button');
+      btn.className = 'filter-btn' + (window[filterStateKey] === t ? ' active' : '');
+      btn.textContent = t === 'all' ? 'All' : t.charAt(0).toUpperCase() + t.slice(1);
+      btn.onclick = () => {
+        window[filterStateKey] = t;
+        renderRelationships(rels, filterId, cardsId, emptyId, filterStateKey);
+      };
+      filtersEl.appendChild(btn);
+    });
+
+    // Filter
+    const activeFilter = window[filterStateKey];
+    const filtered = activeFilter === 'all' ? rels : rels.filter(r => r.relationship_type === activeFilter);
+
+    const cardsEl = document.getElementById(cardsId);
+    const emptyEl = document.getElementById(emptyId);
+
+    if (!filtered.length) {
+      cardsEl.innerHTML = '';
+      emptyEl.style.display = 'block';
+      return;
+    }
+    emptyEl.style.display = 'none';
+
+    cardsEl.innerHTML = '';
+    filtered.forEach(r => cardsEl.appendChild(buildRelCard(r)));
+  }
+
+  function buildRelCard(r) {
+    const div = document.createElement('div');
+    div.className = 'rel-card';
+
+    const confPct = typeof r.confidence === 'number' ? (r.confidence * 100).toFixed(0) + '%' : '—';
+
+    div.innerHTML = `
+      <div class="rel-card-header">
+        <span class="rel-badge ${escHtml(r.relationship_type)}">${relIcon(r.relationship_type)} ${escHtml(r.relationship_type)}</span>
+        <span class="rel-conf">confidence: ${confPct}</span>
+      </div>
+      <div class="rel-facts">
+        <div class="rel-fact-box">
+          <div class="fact-subject">${escHtml(r.subject_a || '—')}</div>
+          <div class="fact-value">${escHtml(r.value_a || '—')}</div>
+          <div class="fact-source">📄 ${escHtml(r.source_filename_a || '—')} · p.${r.evidence_page_a || '?'}</div>
+        </div>
+        <div class="rel-vs">vs</div>
+        <div class="rel-fact-box">
+          <div class="fact-subject">${escHtml(r.subject_b || '—')}</div>
+          <div class="fact-value">${escHtml(r.value_b || '—')}</div>
+          <div class="fact-source">📄 ${escHtml(r.source_filename_b || '—')} · p.${r.evidence_page_b || '?'}</div>
+        </div>
+      </div>
+      <div class="rel-explanation">${escHtml(r.explanation || '')}</div>
+    `;
+    return div;
+  }
+
+  function relIcon(type) {
+    if (type === 'corroborates')  return '✓';
+    if (type === 'contradicts')   return '✕';
+    if (type === 'reconcilable')  return '~';
+    return '';
+  }
+
+  /* ============================================================
+     GLOBAL RELATIONSHIPS VIEW
+     ============================================================ */
+  async function showAllRelationships() {
+    showView('all-rel-view');
+    activeGlobalFilter = 'all';
+
+    try {
+      const rels = await apiFetch('/relationships');
+      allGlobalRelationships = rels;
+      renderRelationships(rels, 'all-rel-filters', 'all-rel-cards', 'all-rel-empty', 'activeGlobalFilter');
+    } catch (e) {
+      console.error('Failed to load all relationships:', e);
+    }
+  }
+
+  function goBackToDoc() {
+    if (selectedDocId) {
+      showView('doc-detail');
+    } else {
+      showView('placeholder');
+    }
+  }
+
+  /* ============================================================
+     UPLOAD
+     ============================================================ */
+  async function uploadFile() {
+    const input = document.getElementById('pdf-input');
+    const status = document.getElementById('upload-status');
+    const btn = document.getElementById('btn-upload');
+
+    if (!input.files || !input.files[0]) {
+      setStatus(status, 'error', 'Please select a PDF file first.');
+      return;
+    }
+
+    const file = input.files[0];
+    if (!file.name.toLowerCase().endsWith('.pdf')) {
+      setStatus(status, 'error', 'Only PDF files are accepted.');
+      return;
+    }
+
+    btn.disabled = true;
+    setStatus(status, 'loading', '<span class="spinner"></span>Extracting facts… this may take a minute.');
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const result = await apiFetch('/upload', { method: 'POST', body: formData });
+      setStatus(status, 'ok', `✓ Done! Document ID: ${result.document_id}`);
+      input.value = '';
+
+      // Refresh list and auto-select the new document
+      await loadDocuments();
+      selectDocument(result.document_id);
+    } catch (e) {
+      setStatus(status, 'error', `Error: ${e.message}`);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  /* ============================================================
+     UTILITIES
+     ============================================================ */
+  function showView(view) {
+    document.getElementById('main-placeholder').style.display = view === 'placeholder' ? 'flex'  : 'none';
+    document.getElementById('doc-detail').style.display       = view === 'doc-detail'  ? 'block' : 'none';
+    document.getElementById('all-rel-view').style.display     = view === 'all-rel-view'? 'block' : 'none';
+  }
+
+  function setStatus(el, cls, html) {
+    el.className = cls;
+    el.innerHTML = html;
+  }
+
+  async function apiFetch(path, options = {}) {
+    const res = await fetch(path, options);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || `HTTP ${res.status}`);
+    }
+    return res.json();
+  }
+
+  function escHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+</script>
+</body>
+</html>

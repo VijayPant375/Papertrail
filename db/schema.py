@@ -91,11 +91,7 @@ def get_db() -> sqlite3.Connection:
     Returns a connection to the database whose path is configured in the
     DB_PATH environment variable (defaults to 'facts.db').
 
-    The sqlite-vec extension is loaded on every new connection.
+    Ensures tables exist and sqlite-vec is loaded.
     """
     db_path = os.getenv("DB_PATH", "facts.db")
-    conn = sqlite3.connect(db_path, check_same_thread=False, isolation_level=None)
-    conn.enable_load_extension(True)
-    sqlite_vec.load(conn)
-    conn.enable_load_extension(False)
-    return conn
+    return init_db(db_path)

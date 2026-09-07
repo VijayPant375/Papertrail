@@ -37,9 +37,13 @@ logger = logging.getLogger(__name__)
 _SIMILARITY_THRESHOLD = 0.75
 _MAX_CANDIDATE_PAIRS = 100
 
-# Prefer the more capable model; fall back to flash if not accessible
-_COMPARISON_MODEL_PRIMARY = "gemini-1.5-pro"
-_COMPARISON_MODEL_FALLBACK = "gemini-2.0-flash"
+# Gemini models used for relationship classification (with automatic fallback)
+_COMPARISON_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-3.8-flash",
+    "gemini-3.5-flash",
+    "gemini-3.1-flash-lite",
+]
 
 _VALID_RELATIONSHIP_TYPES = {"corroborates", "contradicts", "reconcilable", "unrelated"}
 
@@ -205,8 +209,8 @@ def compare_fact_pair(
         fact_b_json=json.dumps(fact_b_payload, indent=2, ensure_ascii=False),
     )
 
-    # Try primary model, fall back to flash on error
-    for model_name in (_COMPARISON_MODEL_PRIMARY, _COMPARISON_MODEL_FALLBACK):
+    result = None
+    for model_name in _COMPARISON_MODELS:
         try:
             response = client.models.generate_content(
                 model=model_name,
@@ -227,15 +231,16 @@ def compare_fact_pair(
             )
             return None
         except Exception as exc:
-            if model_name == _COMPARISON_MODEL_PRIMARY:
-                logger.info(
-                    "Primary model %s unavailable (%s), trying fallback.",
-                    model_name,
-                    exc,
-                )
-                continue
-            logger.warning("compare_fact_pair failed with both models: %s", exc)
-            return None
+            logger.info(
+                "Model %s failed during comparison (%s), trying fallback.",
+                model_name,
+                exc,
+            )
+            continue
+
+    if not result:
+        logger.warning("compare_fact_pair failed with all comparison models.")
+        return None
 
     # Validate response shape
     rel_type = result.get("relationship_type", "").lower()

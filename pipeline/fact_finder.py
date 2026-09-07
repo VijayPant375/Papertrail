@@ -13,8 +13,9 @@ process_document(pdf_path, filename)    -> str  (document_id)
 """
 
 import json
-import os
 import logging
+import os
+import time
 
 from dotenv import load_dotenv
 from google import genai
@@ -39,8 +40,42 @@ logger = logging.getLogger(__name__)
 # Model constants
 # ---------------------------------------------------------------------------
 
-_GENERATION_MODEL = "gemini-2.0-flash"
-_EMBEDDING_MODEL = "models/text-embedding-004"
+_GENERATION_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-3.8-flash",
+    "gemini-3.5-flash",
+    "gemini-3.1-flash-lite",
+]
+_EMBEDDING_MODELS = [
+    "gemini-embedding-002",
+]
+
+
+def get_embedding(client: genai.Client, text: str) -> list[float]:
+    """
+    Generate a semantic similarity embedding for *text*.
+
+    The caller should pass subject + " " + predicate + " " + value
+    as the input text.
+
+    Returns:
+        A Python list of floats representing the embedding vector.
+    """
+    for model_name in _EMBEDDING_MODELS:
+        try:
+            response = client.models.embed_content(
+                model=model_name,
+                contents=text,
+                config=types.EmbedContentConfig(
+                    task_type="SEMANTIC_SIMILARITY",
+                ),
+            )
+            return response.embeddings[0].values
+        except Exception as exc:
+            logger.warning("get_embedding failed with %s: %s", model_name, exc)
+            continue
+
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -75,26 +110,29 @@ def extract_document_metadata(client: genai.Client, text: str) -> dict:
     """
     prompt = DOCUMENT_METADATA_PROMPT.format(text=text)
 
-    try:
-        response = client.models.generate_content(
-            model=_GENERATION_MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.1,
-                response_mime_type="application/json",
-            ),
-        )
-        raw = response.text.strip()
-        return json.loads(raw)
-    except Exception as exc:
-        logger.warning("extract_document_metadata failed: %s", exc)
-        return {
-            "title": "unknown",
-            "document_type": "unknown",
-            "organization": "unknown",
-            "period_covered": None,
-            "publication_date": None,
-        }
+    for model_name in _GENERATION_MODELS:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.1,
+                    response_mime_type="application/json",
+                ),
+            )
+            raw = response.text.strip()
+            return json.loads(raw)
+        except Exception as exc:
+            logger.warning("extract_document_metadata failed with %s: %s", model_name, exc)
+            continue
+
+    return {
+        "title": "unknown",
+        "document_type": "unknown",
+        "organization": "unknown",
+        "period_covered": None,
+        "publication_date": None,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -128,68 +166,45 @@ def extract_facts_from_chunk(
         text=full_text,
     )
 
-    try:
-        response = client.models.generate_content(
-            model=_GENERATION_MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.1,
-                response_mime_type="application/json",
-            ),
-        )
-        raw = response.text.strip()
-        facts = json.loads(raw)
-
-        if not isinstance(facts, list):
-            logger.warning(
-                "Chunk %d: expected JSON array, got %s — skipping.",
-                chunk["page_number"],
-                type(facts).__name__,
+    for model_name in _GENERATION_MODELS:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.1,
+                    response_mime_type="application/json",
+                ),
             )
-            return []
+            raw = response.text.strip()
+            facts = json.loads(raw)
 
-        # Stamp each fact with the source page
-        for fact in facts:
-            fact["evidence_page"] = chunk["page_number"]
+            if not isinstance(facts, list):
+                logger.warning(
+                    "Chunk %d: expected JSON array, got %s — skipping.",
+                    chunk["page_number"],
+                    type(facts).__name__,
+                )
+                return []
 
-        return facts
+            # Stamp each fact with the source page
+            for fact in facts:
+                fact["evidence_page"] = chunk["page_number"]
 
-    except json.JSONDecodeError as exc:
-        logger.warning(
-            "Chunk %d: JSON parse error (%s). Raw response: %r",
-            chunk["page_number"],
-            exc,
-            getattr(response, "text", "<no response text>"),
-        )
-        return []
-    except Exception as exc:
-        logger.warning("Chunk %d: Gemini call failed: %s", chunk["page_number"], exc)
-        return []
+            return facts
+
+        except Exception as exc:
+            logger.warning(
+                "Chunk %d: Gemini call failed with %s: %s",
+                chunk["page_number"],
+                model_name,
+                exc,
+            )
+            continue
+
+    return []
 
 
-# ---------------------------------------------------------------------------
-# Embeddings
-# ---------------------------------------------------------------------------
-
-def get_embedding(client: genai.Client, text: str) -> list[float]:
-    """
-    Generate a semantic similarity embedding for *text* using
-    models/text-embedding-004.
-
-    The caller should pass  subject + " " + predicate + " " + value
-    as the input text.
-
-    Returns:
-        A Python list of floats representing the embedding vector.
-    """
-    response = client.models.embed_content(
-        model=_EMBEDDING_MODEL,
-        contents=text,
-        config=types.EmbedContentConfig(
-            task_type="SEMANTIC_SIMILARITY",
-        ),
-    )
-    return response.embeddings[0].values
 
 
 # ---------------------------------------------------------------------------
