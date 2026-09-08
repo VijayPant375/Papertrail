@@ -803,25 +803,15 @@ However, the graph would remain a visualization layer on top of the core system�
 
 ---
 
-# 📝 AI Tools Used
+## 🤖 AI Tools Used
 
-Papertrail uses the following AI technology as part of the implementation:
+AI-assisted development tools used during the project:
 
-* **Google Gemini API** — Structured fact extraction and relationship reasoning
-* **Gemini embeddings** — Intended semantic candidate selection
+- **ChatGPT (GPT)** — architecture discussions, debugging assistance, documentation, and development support.
+- **Claude** — technical reasoning, code review, and implementation assistance.
+- **Antigravity** — development assistance during the project.
 
-AI was used as a component of the pipeline rather than as a replacement for the system architecture.
-
-The surrounding engineering work includes:
-
-* PDF extraction
-* Page-level chunking
-* Structured storage
-* Evidence tracking
-* Candidate selection
-* Relationship persistence
-* API design
-* Failure handling and debugging
+All implementation decisions, integration, testing, and final project submission were completed and reviewed by me.
 
 ---
 
