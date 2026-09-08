@@ -2,14 +2,16 @@
 pipeline/comparator.py
 
 Cross-document fact comparison using cosine-similarity candidate selection
-followed by an LLM-powered relationship classification pass.
+(with a subject/fact_type fallback when embeddings are empty) followed by
+an LLM-powered relationship classification pass.
 
 Public API
 ----------
-cosine_similarity(a, b)              -> float
-find_candidate_pairs(document_id)    -> list[tuple[dict, dict]]
-compare_fact_pair(client, a, b)      -> dict | None
-trigger_comparison(document_id)      -> None
+cosine_similarity(a, b)                    -> float
+find_candidate_pairs(doc_a_id, doc_b_id)   -> list[tuple[dict, dict]]
+compare_fact_pair(client, a, b)            -> dict | None
+compare_document_pair(doc_a_id, doc_b_id)  -> int   (relationships saved)
+trigger_comparison(document_id)            -> None
 """
 
 import json
@@ -24,6 +26,7 @@ from db.queries import (
     get_all_facts_except_document,
     get_document,
     get_facts_for_document,
+    list_documents,
     log_stage,
     save_relationship,
 )
@@ -35,7 +38,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _SIMILARITY_THRESHOLD = 0.75
-_MAX_CANDIDATE_PAIRS = 100
+_MAX_CANDIDATE_PAIRS = 200   # hard cap for both embedding and fallback paths
+_FALLBACK_MIN_PAIRS = 1      # if embedding yields fewer than this, run fallback
 
 # Gemini models used for relationship classification (with automatic fallback)
 _COMPARISON_MODELS = [
@@ -89,47 +93,89 @@ def cosine_similarity(a: bytes, b: bytes) -> float:
 # Candidate pair selection
 # ---------------------------------------------------------------------------
 
-def find_candidate_pairs(document_id: str) -> list[tuple[dict, dict]]:
+def find_candidate_pairs(
+    doc_a_id: str,
+    doc_b_id: str,
+) -> list[tuple[dict, dict]]:
     """
-    Find semantically similar fact pairs between the new document and all
-    previously stored facts using cosine similarity on stored embeddings.
+    Find candidate fact pairs between *doc_a_id* and *doc_b_id* for LLM
+    relationship classification.
 
-    Steps
-    -----
-    1. Fetch all facts for *document_id* (these are the "new" facts).
-    2. Fetch all facts from every other document (the "existing" facts).
-    3. Compute cosine similarity for every (new, existing) pair.
-    4. Keep only pairs with similarity >= _SIMILARITY_THRESHOLD.
-    5. Sort descending by similarity and cap at _MAX_CANDIDATE_PAIRS.
+    Primary path — cosine similarity on stored embeddings
+    -------------------------------------------------------
+    1. Fetch facts (with embeddings) for both documents.
+    2. Compute cosine similarity for every cross-document pair.
+    3. Keep pairs with similarity >= _SIMILARITY_THRESHOLD.
+    4. Sort descending and cap at _MAX_CANDIDATE_PAIRS.
+
+    Fallback path — structural matching (used when embeddings are empty/missing)
+    ----------------------------------------------------------------------------
+    If the primary path yields fewer than _FALLBACK_MIN_PAIRS, fall back to
+    matching facts where:
+        subject LIKE %other_subject%  OR  fact_type = other_fact_type
+    across the two documents.  Cap at _MAX_CANDIDATE_PAIRS.
 
     Returns:
-        List of (fact_a, fact_b) tuples where fact_a is from *document_id*.
+        List of (fact_a, fact_b) tuples, fact_a from *doc_a_id*.
     """
-    new_facts = get_facts_for_document(document_id)
-    # get_facts_for_document strips embeddings — we need them, so fetch again
-    # via get_all_facts_except_document for the "other" side, and refetch new
-    # facts with embeddings directly
-    new_facts_with_emb = _get_facts_with_embeddings(document_id)
-    other_facts = get_all_facts_except_document(document_id)
+    facts_a = _get_facts_with_embeddings(doc_a_id)
+    facts_b = _get_facts_with_embeddings(doc_b_id)
 
-    if not new_facts_with_emb or not other_facts:
+    if not facts_a or not facts_b:
         return []
 
+    # ---- Primary: embedding cosine similarity --------------------------------
     scored: list[tuple[float, dict, dict]] = []
 
-    for fact_a in new_facts_with_emb:
+    for fact_a in facts_a:
         emb_a = fact_a.get("embedding") or b""
-        for fact_b in other_facts:
+        for fact_b in facts_b:
             emb_b = fact_b.get("embedding") or b""
             sim = cosine_similarity(emb_a, emb_b)
             if sim >= _SIMILARITY_THRESHOLD:
                 scored.append((sim, fact_a, fact_b))
 
-    # Sort highest similarity first, cap at limit
-    scored.sort(key=lambda t: t[0], reverse=True)
-    scored = scored[:_MAX_CANDIDATE_PAIRS]
+    if len(scored) >= _FALLBACK_MIN_PAIRS:
+        scored.sort(key=lambda t: t[0], reverse=True)
+        return [(fa, fb) for _, fa, fb in scored[:_MAX_CANDIDATE_PAIRS]]
 
-    return [(fact_a, fact_b) for _, fact_a, fact_b in scored]
+    # ---- Fallback: subject / fact_type structural matching ------------------
+    logger.info(
+        "find_candidate_pairs: embedding path found %d pairs for (%s, %s); "
+        "running subject/fact_type fallback.",
+        len(scored),
+        doc_a_id,
+        doc_b_id,
+    )
+
+    seen: set[tuple[str, str]] = set()
+    fallback: list[tuple[dict, dict]] = []
+
+    for fact_a in facts_a:
+        subj_a = (fact_a.get("subject") or "").lower()
+        type_a = (fact_a.get("fact_type") or "").lower()
+
+        for fact_b in facts_b:
+            pair_key = (fact_a["id"], fact_b["id"])
+            if pair_key in seen:
+                continue
+
+            subj_b = (fact_b.get("subject") or "").lower()
+            type_b = (fact_b.get("fact_type") or "").lower()
+
+            # Match if subjects overlap OR fact_types are identical
+            subject_overlap = (
+                subj_a and subj_b and (subj_a in subj_b or subj_b in subj_a)
+            )
+            type_match = type_a and type_b and type_a == type_b
+
+            if subject_overlap or type_match:
+                seen.add(pair_key)
+                fallback.append((fact_a, fact_b))
+                if len(fallback) >= _MAX_CANDIDATE_PAIRS:
+                    return fallback
+
+    return fallback
 
 
 def _get_facts_with_embeddings(document_id: str) -> list[dict]:
@@ -262,53 +308,57 @@ def compare_fact_pair(
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def trigger_comparison(document_id: str) -> None:
+def compare_document_pair(
+    doc_a_id: str,
+    doc_b_id: str,
+    client: "genai.Client | None" = None,
+) -> int:
     """
-    Orchestrate cross-document fact comparison for *document_id*.
+    Run the full candidate-selection → LLM classification pipeline for a
+    single pair of documents and persist the results.
 
-    Called automatically at the end of process_document() in fact_finder.py.
+    Args:
+        doc_a_id: UUID of the first document.
+        doc_b_id: UUID of the second document.
+        client:   Optional pre-initialised genai.Client; created from
+                  GEMINI_API_KEY env-var if not supplied.
 
-    Steps
-    -----
-    1. Find candidate fact pairs by vector similarity.
-    2. If none exist (first document), log and return early.
-    3. Set up Gemini client.
-    4. For each pair, classify the relationship via LLM.
-    5. Save non-unrelated relationships to the DB.
-    6. Log completion with relationship count.
+    Returns:
+        Number of relationships saved.
     """
     import os
     from dotenv import load_dotenv
 
     load_dotenv()
 
-    log_stage(document_id, "comparison", "started", "Searching for candidate fact pairs.")
+    if client is None:
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            logger.error("compare_document_pair: GEMINI_API_KEY not set.")
+            return 0
+        client = genai.Client(api_key=api_key)
 
-    candidate_pairs = find_candidate_pairs(document_id)
-
+    candidate_pairs = find_candidate_pairs(doc_a_id, doc_b_id)
     if not candidate_pairs:
-        log_stage(
-            document_id,
-            "comparison",
-            "skipped",
-            "No prior documents to compare — this is the first document or no similar facts found.",
+        logger.info(
+            "compare_document_pair: no candidate pairs for (%s, %s).",
+            doc_a_id,
+            doc_b_id,
         )
-        return
+        return 0
 
-    # Set up Gemini client
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        log_stage(document_id, "comparison", "error", "GEMINI_API_KEY not set.")
-        return
-
-    client = genai.Client(api_key=api_key)
+    logger.info(
+        "compare_document_pair: %d candidate pairs for (%s, %s).",
+        len(candidate_pairs),
+        doc_a_id,
+        doc_b_id,
+    )
 
     relationships_saved = 0
-
     for fact_a, fact_b in candidate_pairs:
         result = compare_fact_pair(client, fact_a, fact_b)
         if result is None:
-            continue  # unrelated or failed — skip
+            continue
 
         try:
             save_relationship(
@@ -321,16 +371,73 @@ def trigger_comparison(document_id: str) -> None:
             relationships_saved += 1
         except Exception as exc:
             logger.warning(
-                "Failed to save relationship between %s and %s: %s",
+                "Failed to save relationship (%s, %s): %s",
                 fact_a["id"],
                 fact_b["id"],
                 exc,
             )
 
+    return relationships_saved
+
+
+def trigger_comparison(document_id: str) -> None:
+    """
+    Orchestrate cross-document fact comparison for *document_id*.
+
+    Called automatically at the end of process_document() in fact_finder.py.
+    Compares the new document against **all** other documents already in the
+    DB (not just ones uploaded before it), so uploading doc-2 always triggers
+    a comparison with doc-1 regardless of insertion order.
+
+    Steps
+    -----
+    1. Collect every document id except *document_id*.
+    2. If none exist (first document), log and return early.
+    3. Set up Gemini client.
+    4. For each other document, run compare_document_pair().
+    5. Log aggregate completion.
+    """
+    import os
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
+    log_stage(document_id, "comparison", "started", "Searching for candidate fact pairs.")
+
+    # Collect all other document ids
+    all_docs = list_documents()
+    other_doc_ids = [d["id"] for d in all_docs if d["id"] != document_id]
+
+    if not other_doc_ids:
+        log_stage(
+            document_id,
+            "comparison",
+            "skipped",
+            "No other documents in the DB — this is the first document.",
+        )
+        return
+
+    # Set up Gemini client once, reuse across document pairs
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        log_stage(document_id, "comparison", "error", "GEMINI_API_KEY not set.")
+        return
+
+    client = genai.Client(api_key=api_key)
+
+    total_relationships = 0
+    total_pairs = 0
+
+    for other_id in other_doc_ids:
+        saved = compare_document_pair(document_id, other_id, client=client)
+        total_relationships += saved
+        # Re-fetch candidate count for logging accuracy is not critical; just note we ran
+        total_pairs += 1
+
     log_stage(
         document_id,
         "comparison",
         "completed",
-        f"Found and saved {relationships_saved} relationships from "
-        f"{len(candidate_pairs)} candidate pairs.",
+        f"Compared against {total_pairs} other document(s); "
+        f"saved {total_relationships} relationship(s).",
     )

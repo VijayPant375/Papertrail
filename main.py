@@ -10,6 +10,7 @@ Startup:
 
 Routes:
   POST /upload
+  POST /compare
   GET  /documents
   GET  /documents/{document_id}
   GET  /documents/{document_id}/relationships
@@ -40,6 +41,7 @@ from db.queries import (
     list_documents,
 )
 from pipeline.fact_finder import process_document
+from pipeline.comparator import compare_document_pair
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -207,3 +209,52 @@ async def get_relationships(
         relationships = [r for r in relationships if r["relationship_type"] == type]
 
     return relationships
+
+
+@app.post("/compare", tags=["Relationships"])
+async def run_compare_all():
+    """
+    Manually trigger cross-document comparison across every document pair
+    currently in the DB and save results to the relationships table.
+
+    Useful for back-filling relationships after bulk uploads, or when the
+    automatic post-upload trigger was skipped (e.g. first document upload).
+
+    Returns a summary with the number of pairs processed and total
+    relationships saved.
+    """
+    docs = list_documents()
+    if len(docs) < 2:
+        return {
+            "pairs_processed": 0,
+            "relationships_saved": 0,
+            "message": "Need at least 2 documents to compare.",
+        }
+
+    # Build the unique set of (doc_a, doc_b) pairs (order-independent)
+    pairs = [
+        (docs[i]["id"], docs[j]["id"])
+        for i in range(len(docs))
+        for j in range(i + 1, len(docs))
+    ]
+
+    total_relationships = 0
+    errors: list[str] = []
+
+    for doc_a_id, doc_b_id in pairs:
+        try:
+            saved = await asyncio.to_thread(compare_document_pair, doc_a_id, doc_b_id)
+            total_relationships += saved
+        except Exception as exc:
+            msg = f"Error comparing ({doc_a_id}, {doc_b_id}): {exc}"
+            logger.warning(msg)
+            errors.append(msg)
+
+    response: dict = {
+        "pairs_processed": len(pairs),
+        "relationships_saved": total_relationships,
+        "message": f"Compared {len(pairs)} pair(s), saved {total_relationships} relationship(s).",
+    }
+    if errors:
+        response["errors"] = errors
+    return response
