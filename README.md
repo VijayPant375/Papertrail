@@ -7,6 +7,7 @@
 **Upload PDFs → Extract grounded facts → Connect evidence across documents → Find what agrees, conflicts, or only appears to conflict**
 
 </div>
+
 ---
 
 ## 🎥 Video Demo
@@ -909,6 +910,7 @@ That would preserve the core idea of Papertrail while making it substantially mo
 
 ---
 
+
 ## ❤️ Built for the Superjoin Engineering Intern Assignment
 
 **Papertrail** is an exploration of how a useful Fact Knowledge Layer can be built from unstructured documents.
@@ -917,4 +919,12 @@ The project is intentionally honest about what worked, what failed, and what tho
 
 > **Facts are only useful when you can trace them back to evidence — and relationships are only useful when you can explain why they exist.**
 
-Built by **Vijay** 🚀
+---
+
+<div align="center">
+
+**Built by [VijayPant375](https://github.com/VijayPant375)**
+
+⭐ Star this repo if you find it helpful!
+
+</div>
