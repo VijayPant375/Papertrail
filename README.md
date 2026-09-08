@@ -10,18 +10,11 @@
 
 ---
 
-## 🎥 Video Demo
+## 🎥 Demo Video
 
-> **Demo video — coming soon**
+**▶️ [Watch the Papertrail Demo](https://drive.google.com/file/d/1A7sya08zymhRXa4qNNONbAJcVJodrSp4/view?usp=drive_link)**
 
-The final demo will show:
-
-* A PDF being processed through the pipeline
-* Extracted facts with source evidence and page references
-* A corroborated fact across documents
-* A genuine contradiction / reasoning failure discovered during testing
-* An apparent contradiction reconciled through context and units
-* An extraction failure and how the system handles or documents it
+The demo shows the PDF processing workflow, extracted facts with source evidence, and the required cross-document relationship cases within the submission limit.
 
 ---
 
