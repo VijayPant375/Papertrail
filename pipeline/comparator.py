@@ -163,11 +163,20 @@ def find_candidate_pairs(
             subj_b = (fact_b.get("subject") or "").lower()
             type_b = (fact_b.get("fact_type") or "").lower()
 
-            # Match if subjects overlap OR fact_types are identical
+            # Subject substring overlap (unchanged from before)
             subject_overlap = (
                 subj_a and subj_b and (subj_a in subj_b or subj_b in subj_a)
             )
-            type_match = type_a and type_b and type_a == type_b
+
+            # fact_type match is NOT sufficient on its own — generic types like
+            # "financial_metric" appear across completely unrelated domains.
+            # Only accept a type-match candidate when the subjects also share at
+            # least one meaningful word (length > 4) so we don't pair, e.g.,
+            # Delhivery revenue against RBI monetary-policy facts.
+            type_match = (
+                type_a and type_b and type_a == type_b
+                and _subjects_share_meaningful_word(subj_a, subj_b)
+            )
 
             if subject_overlap or type_match:
                 seen.add(pair_key)
@@ -176,6 +185,22 @@ def find_candidate_pairs(
                     return fallback
 
     return fallback
+
+
+def _subjects_share_meaningful_word(subj_a: str, subj_b: str) -> bool:
+    """
+    Return True if *subj_a* and *subj_b* share at least one word that is
+    longer than 4 characters.
+
+    This prevents generic fact_type values (e.g. "financial_metric") from
+    acting as the sole match signal between facts from completely unrelated
+    domains (e.g. Delhivery logistics vs RBI monetary policy).  A shared
+    meaningful word like "india", "growth", "gdp", "inflation" indicates the
+    two subjects genuinely refer to the same concept.
+    """
+    words_a = {w for w in subj_a.split() if len(w) > 4}
+    words_b = {w for w in subj_b.split() if len(w) > 4}
+    return bool(words_a & words_b)
 
 
 def _get_facts_with_embeddings(document_id: str) -> list[dict]:

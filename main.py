@@ -217,17 +217,15 @@ async def run_compare_all():
     Manually trigger cross-document comparison across every document pair
     currently in the DB and save results to the relationships table.
 
-    Useful for back-filling relationships after bulk uploads, or when the
-    automatic post-upload trigger was skipped (e.g. first document upload).
-
-    Returns a summary with the number of pairs processed and total
-    relationships saved.
+    Returns immediately with {"status": "started"} and runs all comparisons
+    in the background to avoid HTTP timeouts.  Progress is visible in the
+    server terminal logs.  Pairs are processed one at a time with a 3-second
+    pause between each to stay within Gemini RPM limits.
     """
     docs = list_documents()
     if len(docs) < 2:
         return {
-            "pairs_processed": 0,
-            "relationships_saved": 0,
+            "status": "skipped",
             "message": "Need at least 2 documents to compare.",
         }
 
@@ -238,23 +236,62 @@ async def run_compare_all():
         for j in range(i + 1, len(docs))
     ]
 
-    total_relationships = 0
-    errors: list[str] = []
+    async def _run_pairs_background():
+        total_relationships = 0
+        errors: list[str] = []
 
-    for doc_a_id, doc_b_id in pairs:
-        try:
-            saved = await asyncio.to_thread(compare_document_pair, doc_a_id, doc_b_id)
-            total_relationships += saved
-        except Exception as exc:
-            msg = f"Error comparing ({doc_a_id}, {doc_b_id}): {exc}"
-            logger.warning(msg)
-            errors.append(msg)
+        logger.info(
+            "compare background task: starting %d pair(s).", len(pairs)
+        )
 
-    response: dict = {
-        "pairs_processed": len(pairs),
-        "relationships_saved": total_relationships,
-        "message": f"Compared {len(pairs)} pair(s), saved {total_relationships} relationship(s).",
+        for idx, (doc_a_id, doc_b_id) in enumerate(pairs, start=1):
+            logger.info(
+                "compare [%d/%d]: starting pair (%s, %s).",
+                idx,
+                len(pairs),
+                doc_a_id,
+                doc_b_id,
+            )
+            try:
+                saved = await asyncio.to_thread(
+                    compare_document_pair, doc_a_id, doc_b_id
+                )
+                total_relationships += saved
+                logger.info(
+                    "compare [%d/%d]: finished pair (%s, %s) — %d relationship(s) saved.",
+                    idx,
+                    len(pairs),
+                    doc_a_id,
+                    doc_b_id,
+                    saved,
+                )
+            except Exception as exc:
+                msg = f"Error comparing ({doc_a_id}, {doc_b_id}): {exc}"
+                logger.warning(msg)
+                errors.append(msg)
+
+            # Respect Gemini RPM limits: pause between pairs unless it's the last one
+            if idx < len(pairs):
+                logger.info(
+                    "compare: sleeping 3 s before next pair to avoid RPM exhaustion."
+                )
+                await asyncio.sleep(3)
+
+        logger.info(
+            "compare background task: done. %d pair(s) processed, "
+            "%d relationship(s) saved%s.",
+            len(pairs),
+            total_relationships,
+            f", {len(errors)} error(s)" if errors else "",
+        )
+
+    asyncio.create_task(_run_pairs_background())
+
+    return {
+        "status": "started",
+        "pairs_queued": len(pairs),
+        "message": (
+            f"Comparison started for {len(pairs)} pair(s). "
+            "Check server logs for progress."
+        ),
     }
-    if errors:
-        response["errors"] = errors
-    return response
